@@ -1,0 +1,2 @@
+include 'bluetoothspp'
+project(':bluetoothspp').projectDir = new File(settingsDir, 'library')

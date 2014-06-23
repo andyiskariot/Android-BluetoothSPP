@@ -1,0 +1,27 @@
+apply plugin: 'android-library'
+
+android {
+    compileSdkVersion 19
+    buildToolsVersion '19.1.0'
+
+    sourceSets {
+        main {
+            java.srcDirs = ['src']
+            res.srcDirs = ['res']
+            manifest.srcFile 'AndroidManifest.xml'
+        }
+    }
+}
+
+dependencies {
+    compile 'com.android.support:support-v4:19.1.0'
+}
+
+apply plugin: 'maven'
+uploadArchives {
+  repositories {
+    mavenDeployer {
+      repository url: 'file://' + new File(System.getProperty('user.home'), 'Dev/android/my-mvn-repo').absolutePath
+    }
+  }
+}
