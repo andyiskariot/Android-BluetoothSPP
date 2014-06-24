@@ -22,11 +22,9 @@ import java.util.Set;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Message;
-import android.widget.Toast;
 
 @SuppressLint("NewApi")
 public class BluetoothSPP {
@@ -35,9 +33,6 @@ public class BluetoothSPP {
 	private OnDataReceivedListener mDataReceivedListener = null;
 	private BluetoothConnectionListener mBluetoothConnectionListener = null;
 	private AutoConnectionListener mAutoConnectionListener = null;
-
-    // Context from activity which call this class
-	private Context mContext;
 
     // Local Bluetooth adapter
     private BluetoothAdapter mBluetoothAdapter = null;
@@ -56,13 +51,12 @@ public class BluetoothSPP {
 	private boolean isServiceRunning = false;
 
 	private String keyword = "";
-    private boolean isAndroid = BluetoothState.DEVICE_ANDROID;
+    private boolean mIsAndroid = BluetoothState.DEVICE_ANDROID;
 
     private BluetoothConnectionListener bcl;
     private int c = 0;
 
-	public BluetoothSPP(Context context) {
-		mContext = context;
+	public BluetoothSPP() {
 		mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
 	}
 
@@ -75,10 +69,12 @@ public class BluetoothSPP {
 	}
 
     public interface BluetoothConnectionListener {
-	    public void onDeviceConnected(String name, String address);
-	    public void onDeviceDisconnected();
-	    public void onDeviceConnectionFailed();
-	}
+        public void onDeviceConnecting();
+        public void onDeviceConnected(String name, String address);
+        public void onDeviceDisconnected();
+        public void onDeviceConnectionFailed();
+        public void onToastMessage(String message);
+    }
 
     public interface AutoConnectionListener {
 	    public void onAutoConnectionStarted();
@@ -103,6 +99,10 @@ public class BluetoothSPP {
 		return mChatService != null;
 	}
 
+    public boolean isConnected() {
+        return isConnected;
+    }
+
 	public boolean isAutoConnecting() {
 		return isAutoConnecting;
 	}
@@ -120,7 +120,9 @@ public class BluetoothSPP {
 	}
 
 	public void setupService() {
-        mChatService = new BluetoothService(mContext, mHandler);
+        if (null == mChatService) {
+            mChatService = new BluetoothService(mHandler);
+        }
 	}
 
 	public BluetoothAdapter getBluetoothAdapter() {
@@ -139,7 +141,7 @@ public class BluetoothSPP {
             if (mChatService.getState() == BluetoothState.STATE_NONE) {
             	isServiceRunning = true;
             	mChatService.start(isAndroid);
-            	BluetoothSPP.this.isAndroid = isAndroid;
+            	mIsAndroid = isAndroid;
             }
         }
 	}
@@ -162,7 +164,7 @@ public class BluetoothSPP {
     public void setDeviceTarget(boolean isAndroid) {
     	stopService();
     	startService(isAndroid);
-    	BluetoothSPP.this.isAndroid = isAndroid;
+    	mIsAndroid = isAndroid;
     }
 
 	@SuppressLint("HandlerLeak")
@@ -173,7 +175,7 @@ public class BluetoothSPP {
                 break;
             case BluetoothState.MESSAGE_READ:
                 byte[] readBuf = (byte[]) msg.obj;
-                String readMessage = new String(readBuf);
+                String readMessage = new String(readBuf, 0, msg.arg1);
                 if(readBuf != null && readBuf.length > 0) {
                 	if(mDataReceivedListener != null)
                 		mDataReceivedListener.onDataReceived(readBuf, readMessage);
@@ -187,8 +189,9 @@ public class BluetoothSPP {
                 isConnected = true;
                 break;
             case BluetoothState.MESSAGE_TOAST:
-                Toast.makeText(mContext, msg.getData().getString(BluetoothState.TOAST)
-                		, Toast.LENGTH_SHORT).show();
+                // Toast.makeText(mContext, msg.getData().getString(BluetoothState.TOAST)
+                // 		, Toast.LENGTH_SHORT).show();
+                mBluetoothConnectionListener.onToastMessage(msg.getData().getString(BluetoothState.TOAST));
                 break;
             case BluetoothState.MESSAGE_STATE_CHANGE:
             	if(mBluetoothStateListener != null)
@@ -207,6 +210,7 @@ public class BluetoothSPP {
 
                 if(!isConnecting && msg.arg1 == BluetoothState.STATE_CONNECTING) {
                 	isConnecting = true;
+                    mBluetoothConnectionListener.onDeviceConnecting();
                 } else if(isConnecting) {
                 	if(msg.arg1 != BluetoothState.STATE_CONNECTED) {
                     	if(mBluetoothConnectionListener != null)
@@ -225,12 +229,15 @@ public class BluetoothSPP {
 
     public void connect(Intent data) {
         String address = data.getExtras().getString(BluetoothState.EXTRA_DEVICE_ADDRESS);
-        BluetoothDevice device = mBluetoothAdapter.getRemoteDevice(address);
-        mChatService.connect(device);
+        connect(address);
     }
 
     public void connect(String address) {
         BluetoothDevice device = mBluetoothAdapter.getRemoteDevice(address);
+        connect(device);
+    }
+
+    public void connect(BluetoothDevice device) {
         mChatService.connect(device);
     }
 
@@ -240,7 +247,7 @@ public class BluetoothSPP {
         	mChatService.stop();
             if(mChatService.getState() == BluetoothState.STATE_NONE) {
             	isServiceRunning = true;
-            	mChatService.start(BluetoothSPP.this.isAndroid);
+            	mChatService.start(mIsAndroid);
             }
         }
     }
@@ -309,53 +316,67 @@ public class BluetoothSPP {
     public void autoConnect(String address) {
     	if(!isAutoConnectionEnabled) {
     		isAutoConnectionEnabled = true;
-    		isAutoConnecting = true;
-        	if(mAutoConnectionListener != null)
-        		mAutoConnectionListener.onAutoConnectionStarted();
-	    	final ArrayList<String> arr_filter_address = new ArrayList<String>();
+            isAutoConnecting = true;
+            if (mAutoConnectionListener != null) {
+                mAutoConnectionListener.onAutoConnectionStarted();
+            }
+            final ArrayList<String> arr_filter_address = new ArrayList<String>();
 	    	final ArrayList<String> arr_filter_name = new ArrayList<String>();
 	    	String[] arr_name = getPairedDeviceName();
 	    	String[] arr_address = getPairedDeviceAddress();
 	    	for(int i = 0 ; i < arr_name.length ; i++) {
-	    		if(arr_address[i].contains(address)) {
+	    		if (arr_address[i].contains(address)) {
 	    			arr_filter_address.add(arr_address[i]);
 	    			arr_filter_name.add(arr_name[i]);
 	    		}
 	    	}
 
 	    	bcl = new BluetoothConnectionListener() {
-				public void onDeviceConnected(String name, String address) {
+                @Override
+                public void onDeviceConnecting() {
+
+                }
+
+                public void onDeviceConnected(String name, String address) {
 					bcl = null;
 		    		isAutoConnecting = false;
 				}
 
 				public void onDeviceDisconnected() { }
 				public void onDeviceConnectionFailed() {
-					if(isServiceRunning) {
-						if(isAutoConnectionEnabled) {
+					if (isServiceRunning) {
+						if (isAutoConnectionEnabled) {
 							c++;
-							if(c >= arr_filter_address.size())
+							if (c >= arr_filter_address.size()) {
 						    	c = 0;
+                            }
 							connect(arr_filter_address.get(c));
-				        	if(mAutoConnectionListener != null)
-				        		mAutoConnectionListener.onNewConnection(arr_filter_name.get(c)
-					    			, arr_filter_address.get(c));
+				        	if (mAutoConnectionListener != null) {
+				        		mAutoConnectionListener.onNewConnection(arr_filter_name.get(c), arr_filter_address.get(c));
+                            }
 						} else {
 							bcl = null;
 				    		isAutoConnecting = false;
 						}
 					}
 				}
-	    	};
+
+                @Override
+                public void onToastMessage(String message) {
+
+                }
+            };
 
 	    	setBluetoothConnectionListener(bcl);
 	    	c = 0;
-        	if(mAutoConnectionListener != null)
+        	if (mAutoConnectionListener != null) {
         		mAutoConnectionListener.onNewConnection(arr_name[c], arr_address[c]);
-        	if(arr_filter_address.size() > 0)
+            }
+        	if (arr_filter_address.size() > 0) {
         		connect(arr_filter_address.get(c));
-        	else
-        		Toast.makeText(mContext, "Device name mismatch", Toast.LENGTH_SHORT).show();
+            } else {
+        		// Toast.makeText(mContext, "Device name mismatch", Toast.LENGTH_SHORT).show();
+            }
     	}
     }
 }
